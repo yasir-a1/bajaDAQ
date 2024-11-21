@@ -31,7 +31,8 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define SPI1_CS_LOW()  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_RESET)
+#define SPI1_CS_HIGH() HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_SET)
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -101,9 +102,13 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+
+	  mcp2515init();
+	  HAL_Delay(500);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+
   }
   /* USER CODE END 3 */
 }
@@ -177,7 +182,7 @@ static void MX_SPI1_Init(void)
   hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
   hspi1.Init.NSS = SPI_NSS_SOFT;
-  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_32;
+  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_64;
   hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
@@ -243,7 +248,7 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(SPI1_CS_GPIO_Port, SPI1_CS_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin : B1_Pin */
   GPIO_InitStruct.Pin = B1_Pin;
@@ -251,19 +256,97 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : PB6 */
-  GPIO_InitStruct.Pin = GPIO_PIN_6;
+  /*Configure GPIO pin : SPI1_CS_Pin */
+  GPIO_InitStruct.Pin = SPI1_CS_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+  HAL_GPIO_Init(SPI1_CS_GPIO_Port, &GPIO_InitStruct);
 
 /* USER CODE BEGIN MX_GPIO_Init_2 */
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_SET);
+
 /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
+void print(const char* buffer){
+	HAL_UART_Transmit(&huart2, (uint8_t*) buffer, sizeof(buffer), 100);
+}
 
+
+void mcp2515writeRegister(uint8_t address, uint8_t data){
+
+	uint8_t txBuffer[3] = {0x02, address, data};
+
+	SPI1_CS_LOW();
+	HAL_SPI_Transmit(&hspi1, txBuffer, sizeof(txBuffer), 100);
+	SPI1_CS_HIGH();
+}
+
+
+uint8_t mcp2515readRegister(uint8_t address){
+
+	uint8_t txBuffer[3] = {0x03, address, 0xFF};
+	uint8_t rxBuffer[3] = {0};
+
+	HAL_StatusTypeDef status;
+
+	SPI1_CS_LOW();
+    status = HAL_SPI_TransmitReceive(&hspi1, txBuffer, rxBuffer, sizeof(txBuffer), 100);
+	SPI1_CS_HIGH();
+
+	if(status != HAL_OK){
+
+		Error_Handler();
+	}
+	return rxBuffer[2];
+}
+
+void mcp2515setTiming(void){
+	// Example configuration for 500 kbps with 8 MHz oscillator
+	// Calculate CNF1, CNF2, CNF3 using the MCP2515 datasheet
+	mcp2515writeRegister(0x2A, 0x00); // CNF1: SJW=1, BRP=0
+	mcp2515writeRegister(0x29, 0x90); // CNF2: BTLMODE=1, SAM=0, PHSEG1=3, PRSEG=1
+	mcp2515writeRegister(0x28, 0x02); // CNF3: SOF=0, WAKFIL=0, PHSEG2=3
+}
+
+void mcp2515normalMode(void){
+
+	mcp2515readRegister(0x0F);
+
+
+}
+
+void mcp2515init(void){
+
+	uint8_t resetOP[1] = {0xC0};
+	SPI1_CS_HIGH();
+	HAL_Delay(10);
+
+	SPI1_CS_LOW();
+	HAL_SPI_Transmit(&hspi1, resetOP, sizeof(resetOP), 100);
+	SPI1_CS_HIGH();
+
+	HAL_Delay(10);
+
+	uint8_t result = mcp2515readRegister(0x0E);
+	HAL_Delay(10);
+
+
+	mcp2515writeRegister(0x0F,0x00);
+	HAL_Delay(10);
+
+
+	uint8_t resultAfter = mcp2515readRegister(0x0E);
+
+	HAL_Delay (10);
+
+	mcp2515writeRegister(0x0F,0x80);
+
+	uint8_t configResult = mcp2515readRegister(0x0E);
+
+}
 /* USER CODE END 4 */
 
 /**
