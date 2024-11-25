@@ -324,27 +324,48 @@ void mcp2515init(void){
 	SPI1_CS_HIGH();
 	HAL_Delay(10);
 
+	mcp2515setTiming();
+
+	//Transmission to reset device
 	SPI1_CS_LOW();
 	HAL_SPI_Transmit(&hspi1, resetOP, sizeof(resetOP), 100);
 	SPI1_CS_HIGH();
 
+	HAL_Delay(1);
+	//Set to configuration Mode
+	mcp2515writeRegister(0x0F,0x80);
+	//Read back to confirm config mode
+	uint8_t configResult = mcp2515readRegister(0x0E);
+
 	HAL_Delay(10);
-
-	uint8_t result = mcp2515readRegister(0x0E);
-	HAL_Delay(10);
-
-
+	//Write CAN status register into Normal Operation mode
 	mcp2515writeRegister(0x0F,0x00);
 	HAL_Delay(10);
 
-
+	//Read CAN status register to confirm normal operation mode
 	uint8_t resultAfter = mcp2515readRegister(0x0E);
 
 	HAL_Delay (10);
 
-	mcp2515writeRegister(0x0F,0x80);
+}
 
-	uint8_t configResult = mcp2515readRegister(0x0E);
+void messageAvailable(void){
+
+	//Set the Interrupt flag from the RX0IF
+	mcp2515writeRegister(0x2C, 0x01);
+
+	//read the result from the Interrupt enable register at RX0IE
+	uint8_t result = mcp2515readRegister(0x2B);
+
+	if (result != 0x01){
+		Error_Handler;
+	}
+}
+
+uint8_t readMessage(void){
+
+	//Use the recevice function and return a random number in place of of it.
+
 
 }
 /* USER CODE END 4 */
