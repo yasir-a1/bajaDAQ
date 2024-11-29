@@ -18,6 +18,8 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include <stdio.h>
+#include <stdlib.h>
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -95,6 +97,8 @@ int main(void)
   MX_USART2_UART_Init();
   MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
+  mcp2515init();
+
 
   /* USER CODE END 2 */
 
@@ -102,9 +106,9 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-
-	  mcp2515init();
+	  mcp2515messageAvailable();
 	  HAL_Delay(500);
+	 // mcp2515readMessage();
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -182,7 +186,7 @@ static void MX_SPI1_Init(void)
   hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
   hspi1.Init.NSS = SPI_NSS_SOFT;
-  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_64;
+  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_32;
   hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
@@ -256,6 +260,12 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
 
+  /*Configure GPIO pin : CAN_INT_Pin */
+  GPIO_InitStruct.Pin = CAN_INT_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(CAN_INT_GPIO_Port, &GPIO_InitStruct);
+
   /*Configure GPIO pin : SPI1_CS_Pin */
   GPIO_InitStruct.Pin = SPI1_CS_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
@@ -321,6 +331,7 @@ void mcp2515normalMode(void){
 void mcp2515init(void){
 
 	uint8_t resetOP[1] = {0xC0};
+	uint8_t status = 0;
 	SPI1_CS_HIGH();
 	HAL_Delay(10);
 
@@ -337,6 +348,8 @@ void mcp2515init(void){
 	//Read back to confirm config mode
 	uint8_t configResult = mcp2515readRegister(0x0E);
 
+	//Set register to accept any message
+
 	HAL_Delay(10);
 	//Write CAN status register into Normal Operation mode
 	mcp2515writeRegister(0x0F,0x00);
@@ -345,27 +358,57 @@ void mcp2515init(void){
 	//Read CAN status register to confirm normal operation mode
 	uint8_t resultAfter = mcp2515readRegister(0x0E);
 
+	if (resultAfter != 0x00){
+
+		Error_Handler();
+	}
+
 	HAL_Delay (10);
 
 }
 
-void messageAvailable(void){
+void mcp2515messageAvailable(void){
 
+	GPIO_PinState status;
+	GPIO_PinState status1;
+
+
+	status = HAL_GPIO_ReadPin(CAN_INT_GPIO_Port, CAN_INT_Pin);
 	//Set the Interrupt flag from the RX0IF
-	mcp2515writeRegister(0x2C, 0x01);
+	mcp2515writeRegister(0x2B, 0x01);
+
+
 
 	//read the result from the Interrupt enable register at RX0IE
 	uint8_t result = mcp2515readRegister(0x2B);
+	result = mcp2515readRegister(0x0C);
+	mcp2515writeRegister(0x2C, 0x01);
 
 	if (result != 0x01){
 		Error_Handler;
 	}
+
+	status1 = HAL_GPIO_ReadPin(CAN_INT_GPIO_Port, CAN_INT_Pin);
+
 }
 
-uint8_t readMessage(void){
 
-	//Use the recevice function and return a random number in place of of it.
+void mcp2515readMessage(void){
 
+	//Use the recevice function and return a random number in place of of it. Clears register as well
+	uint8_t readRXB0[1] = {0x90};
+	uint8_t RXB0Buffer = 0x00;
+
+	SPI1_CS_LOW();
+	HAL_SPI_Transmit(&hspi1, readRXB0, sizeof(readRXB0), 100);
+	//HAL_SPI_Receive(&hspi1, RXB0Buffer, 1, 100);
+	SPI1_CS_HIGH();
+
+
+	RXB0Buffer = rand() % (255);
+	RXB0Buffer = (uint8_t)100;
+
+//	return RXB0Buffer;
 
 }
 /* USER CODE END 4 */
