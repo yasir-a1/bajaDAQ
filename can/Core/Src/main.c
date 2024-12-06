@@ -18,8 +18,6 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include <stdio.h>
-#include <stdlib.h>
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -106,9 +104,9 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  mcp2515messageAvailable();
+	  //mcp2515messageAvailable();
 	  HAL_Delay(500);
-	 // mcp2515readMessage();
+	  mcp2515readMessage();
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -280,10 +278,13 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-void print(const char* buffer){
-	HAL_UART_Transmit(&huart2, (uint8_t*) buffer, sizeof(buffer), 100);
-}
+void print(const char* buffer) {
+	 // Correctly calculate the string length
+	    size_t length = strlen(buffer);
 
+	    // Transmit the string over UART
+	    HAL_UART_Transmit(&huart2, (uint8_t*)buffer, length, 100);
+}
 
 void mcp2515writeRegister(uint8_t address, uint8_t data){
 
@@ -342,11 +343,30 @@ void mcp2515init(void){
 	HAL_SPI_Transmit(&hspi1, resetOP, sizeof(resetOP), 100);
 	SPI1_CS_HIGH();
 
+
+
 	HAL_Delay(1);
 	//Set to configuration Mode
 	mcp2515writeRegister(0x0F,0x80);
 	//Read back to confirm config mode
 	uint8_t configResult = mcp2515readRegister(0x0E);
+
+	if (configResult != 0x80){
+		Error_Handler();
+
+	}
+
+	mcp2515writeRegister(0x60, 0x60);
+
+	uint8_t	buffer0ConfigResult = mcp2515readRegister(0x60);
+
+	if (buffer0ConfigResult != 0x60){
+		Error_Handler();
+	}
+//	if (configResult != 0x80){
+//
+//			Error_Handler();
+//		}
 
 	//Set register to accept any message
 
@@ -397,18 +417,32 @@ void mcp2515readMessage(void){
 
 	//Use the recevice function and return a random number in place of of it. Clears register as well
 	uint8_t readRXB0[1] = {0x90};
-	uint8_t RXB0Buffer = 0x00;
+	uint8_t RXB0Buffer[14] = {0};
+	char outputBuffer[2];
+
+	//Clear RXB0
+	mcp2515writeRegister(0x2C, 0x00);
 
 	SPI1_CS_LOW();
-	HAL_SPI_Transmit(&hspi1, readRXB0, sizeof(readRXB0), 100);
-	//HAL_SPI_Receive(&hspi1, RXB0Buffer, 1, 100);
+	HAL_SPI_Transmit(&hspi1, readRXB0, 1, 100);
+	HAL_SPI_Receive(&hspi1, RXB0Buffer, 14, 100);
 	SPI1_CS_HIGH();
 
+	// Convert the received byte to a null-terminated string
+	outputBuffer[0] = (char)RXB0Buffer[1];
+	outputBuffer[1] = '\0'; // Null-terminator
 
+	// Use the print function
+	print(outputBuffer);
+	//Without module
 	RXB0Buffer = rand() % (255);
 	RXB0Buffer = (uint8_t)100;
 
 //	return RXB0Buffer;
+
+//	if(!(0>= RXB0Buffer > 101)){
+//		Error_Handler();
+//	}
 
 }
 /* USER CODE END 4 */
