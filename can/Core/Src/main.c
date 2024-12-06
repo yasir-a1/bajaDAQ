@@ -19,8 +19,11 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 
+
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include <stdio.h>
+#include <stdbool.h>
 
 /* USER CODE END Includes */
 
@@ -37,6 +40,7 @@
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
+
 
 /* USER CODE END PM */
 
@@ -343,11 +347,10 @@ void mcp2515init(void){
 	HAL_SPI_Transmit(&hspi1, resetOP, sizeof(resetOP), 100);
 	SPI1_CS_HIGH();
 
-
-
 	HAL_Delay(1);
 	//Set to configuration Mode
 	mcp2515writeRegister(0x0F,0x80);
+
 	//Read back to confirm config mode
 	uint8_t configResult = mcp2515readRegister(0x0E);
 
@@ -355,7 +358,7 @@ void mcp2515init(void){
 		Error_Handler();
 
 	}
-
+	//Write into the receive 0 buffer to receive any message coming through
 	mcp2515writeRegister(0x60, 0x60);
 
 	uint8_t	buffer0ConfigResult = mcp2515readRegister(0x60);
@@ -379,15 +382,17 @@ void mcp2515init(void){
 	uint8_t resultAfter = mcp2515readRegister(0x0E);
 
 	if (resultAfter != 0x00){
-
 		Error_Handler();
 	}
 
 	HAL_Delay (10);
-
 }
 
 void mcp2515messageAvailable(void){
+
+	/*Function to trigger the interrupt on the MCP2515 module
+	 * when a message is available in the receive buffer 0 (RXB0)
+	 */
 
 	GPIO_PinState status;
 	GPIO_PinState status1;
@@ -413,11 +418,16 @@ void mcp2515messageAvailable(void){
 }
 
 
-void mcp2515readMessage(void){
+uint8_t mcp2515readMessage(bool random, uint8_t fixedData){
+
+	//Use this function to take the message and transform it into a readable CAN message packet to be read
 
 	//Use the recevice function and return a random number in place of of it. Clears register as well
 	uint8_t readRXB0[1] = {0x90};
 	uint8_t RXB0Buffer[14] = {0};
+	uint16_t RXB0Data[1] = {0};
+	const char sensorName[20] = "Temp Sensor";
+
 	char outputBuffer[2];
 
 	//Clear RXB0
@@ -434,17 +444,30 @@ void mcp2515readMessage(void){
 
 	// Use the print function
 	print(outputBuffer);
-	//Without module
-	RXB0Buffer = rand() % (255);
-	RXB0Buffer = (uint8_t)100;
 
-//	return RXB0Buffer;
+	MessageCAN canMessage = {
+		.canID = 0x35,
+		.data = RXB0Data[0],
+		.sensorName = sensorName,
+		.timeStamp = 0
+	};
 
-//	if(!(0>= RXB0Buffer > 101)){
-//		Error_Handler();
-//	}
 
+	//Returns data of the message, can be random or fixed for testing
+	if (random == True){
+		RXB0Data[0] = rand() % (255);
+	}
+	else{
+
+		RXB0Data[0] = fixedData;
+	}
+
+	print(RXB0Data);
+	//Add message to mail queue
+	return RXB0Data;
 }
+
+
 /* USER CODE END 4 */
 
 /**

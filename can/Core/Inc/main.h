@@ -37,6 +37,13 @@ extern "C" {
 /* Exported types ------------------------------------------------------------*/
 /* USER CODE BEGIN ET */
 
+typedef struct {
+	uint8_t canID;
+	uint16_t data;
+	uint16_t timeStamp;
+	const char *sensorName;
+}MessageCAN;
+
 /* USER CODE END ET */
 
 /* Exported constants --------------------------------------------------------*/
