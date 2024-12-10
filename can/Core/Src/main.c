@@ -418,7 +418,7 @@ void mcp2515messageAvailable(void){
 }
 
 
-uint8_t mcp2515readMessage(bool random, uint8_t fixedData){
+void mcp2515readMessage(bool random, uint8_t fixedData){
 
 	//Use this function to take the message and transform it into a readable CAN message packet to be read
 
@@ -445,16 +445,11 @@ uint8_t mcp2515readMessage(bool random, uint8_t fixedData){
 	// Use the print function
 	print(outputBuffer);
 
-	MessageCAN canMessage = {
-		.canID = 0x35,
-		.data = RXB0Data[0],
-		.sensorName = sensorName,
-		.timeStamp = 0
-	};
+
 
 
 	//Returns data of the message, can be random or fixed for testing
-	if (random == True){
+	if (random == true){
 		RXB0Data[0] = rand() % (255);
 	}
 	else{
@@ -462,7 +457,17 @@ uint8_t mcp2515readMessage(bool random, uint8_t fixedData){
 		RXB0Data[0] = fixedData;
 	}
 
-	print(RXB0Data);
+
+	MessageCAN canMessage = {
+		.canID = 0x35,
+		.data = RXB0Data[0],
+		.sensorName = sensorName,
+		.timeStamp = 0
+	};
+
+	print(canMessage.data);
+
+
 	//Add message to mail queue
 	return RXB0Data;
 }
