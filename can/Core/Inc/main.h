@@ -41,7 +41,7 @@ typedef struct {
 	uint8_t canID;
 	uint16_t data;
 	uint16_t timeStamp;
-	const char *sensorName;
+	char sensorName[30];
 }MessageCAN;
 
 /* USER CODE END ET */
@@ -64,8 +64,9 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
-#define B1_Pin GPIO_PIN_13
-#define B1_GPIO_Port GPIOC
+#define Btn_Int_Pin GPIO_PIN_13
+#define Btn_Int_GPIO_Port GPIOC
+#define Btn_Int_EXTI_IRQn EXTI15_10_IRQn
 #define USART_TX_Pin GPIO_PIN_2
 #define USART_TX_GPIO_Port GPIOA
 #define USART_RX_Pin GPIO_PIN_3

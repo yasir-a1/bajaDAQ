@@ -18,12 +18,13 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-
+#include "cmsis_os.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
 #include <stdbool.h>
+#include "event_groups.h"
 
 /* USER CODE END Includes */
 
@@ -36,6 +37,9 @@
 /* USER CODE BEGIN PD */
 #define SPI1_CS_LOW()  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_RESET)
 #define SPI1_CS_HIGH() HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_SET)
+#define EVENT_BIT_0 (0 << 0)
+#define EVENT_BIT_1 (1 << 0)
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -49,7 +53,13 @@ SPI_HandleTypeDef hspi1;
 
 UART_HandleTypeDef huart2;
 
+osThreadId defaultTaskHandle;
+osThreadId myTask02Handle;
 /* USER CODE BEGIN PV */
+
+EventGroupHandle_t messageToRead;
+static StaticTask_t xTimerTaskTCB;
+static StackType_t xTimerStack[configTIMER_TASK_STACK_DEPTH];
 
 /* USER CODE END PV */
 
@@ -58,7 +68,20 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_SPI1_Init(void);
+void StartDefaultTask(void const * argument);
+void StartTask02(void const * argument);
+
 /* USER CODE BEGIN PFP */
+
+//No idea what this doe, but needed for xEventGroupSetBitsFromISR
+void vApplicationGetTimerTaskMemory(StaticTask_t **ppxTimerTaskTCBBuffer,
+                                    StackType_t **ppxTimerTaskStackBuffer,
+                                    uint32_t *pulTimerTaskStackSize)
+{
+    *ppxTimerTaskTCBBuffer = &xTimerTaskTCB;              // Provide TCB memory
+    *ppxTimerTaskStackBuffer = xTimerStack;               // Provide stack memory
+    *pulTimerTaskStackSize = configTIMER_TASK_STACK_DEPTH; // Provide stack size
+}
 
 /* USER CODE END PFP */
 
@@ -100,17 +123,49 @@ int main(void)
   MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
   mcp2515init();
-
+  print("Program Started");
 
   /* USER CODE END 2 */
+
+  /* USER CODE BEGIN RTOS_MUTEX */
+  /* add mutexes, ... */
+  /* USER CODE END RTOS_MUTEX */
+
+  /* USER CODE BEGIN RTOS_SEMAPHORES */
+  /* add semaphores, ... */
+  /* USER CODE END RTOS_SEMAPHORES */
+
+  /* USER CODE BEGIN RTOS_TIMERS */
+  messageToRead = xEventGroupCreate();
+  /* USER CODE END RTOS_TIMERS */
+
+  /* USER CODE BEGIN RTOS_QUEUES */
+  /* add queues, ... */
+  /* USER CODE END RTOS_QUEUES */
+
+  /* Create the thread(s) */
+  /* definition and creation of defaultTask */
+  osThreadDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 128);
+  defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
+
+  /* definition and creation of myTask02 */
+  osThreadDef(myTask02, StartTask02, osPriorityAboveNormal, 0, 128);
+  myTask02Handle = osThreadCreate(osThread(myTask02), NULL);
+
+  /* USER CODE BEGIN RTOS_THREADS */
+  /* add threads, ... */
+  /* USER CODE END RTOS_THREADS */
+
+  /* Start scheduler */
+  osKernelStart();
+
+  /* We should never get here as control is now taken by the scheduler */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
 	  //mcp2515messageAvailable();
-	  HAL_Delay(500);
-	  mcp2515readMessage();
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -256,11 +311,11 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(SPI1_CS_GPIO_Port, SPI1_CS_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pin : B1_Pin */
-  GPIO_InitStruct.Pin = B1_Pin;
+  /*Configure GPIO pin : Btn_Int_Pin */
+  GPIO_InitStruct.Pin = Btn_Int_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(Btn_Int_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : CAN_INT_Pin */
   GPIO_InitStruct.Pin = CAN_INT_Pin;
@@ -275,6 +330,10 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(SPI1_CS_GPIO_Port, &GPIO_InitStruct);
 
+  /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI15_10_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
+
 /* USER CODE BEGIN MX_GPIO_Init_2 */
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_SET);
 
@@ -283,13 +342,23 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 void print(const char* buffer) {
-	 // Correctly calculate the string length
-	    size_t length = strlen(buffer);
+    // Calculate the string length
+    size_t length = strlen(buffer);
 
-	    // Transmit the string over UART
-	    HAL_UART_Transmit(&huart2, (uint8_t*)buffer, length, 100);
+    // Add space for the new line and carriage return
+    char tempBuffer[length + 3]; // Original string + '\r' + '\n' + null terminator
+
+    // Copy the original string into the temporary buffer
+    strcpy(tempBuffer, buffer);
+
+    // Append the new line and carriage return
+    tempBuffer[length] = '\r';     // Carriage return
+    tempBuffer[length + 1] = '\n'; // New line
+    tempBuffer[length + 2] = '\0'; // Null terminator
+
+    // Transmit the modified string over UART
+    HAL_UART_Transmit(&huart2, (uint8_t*)tempBuffer, strlen(tempBuffer), 100);
 }
-
 void mcp2515writeRegister(uint8_t address, uint8_t data){
 
 	uint8_t txBuffer[3] = {0x02, address, data};
@@ -414,7 +483,6 @@ void mcp2515messageAvailable(void){
 	}
 
 	status1 = HAL_GPIO_ReadPin(CAN_INT_GPIO_Port, CAN_INT_Pin);
-
 }
 
 
@@ -423,57 +491,135 @@ void mcp2515readMessage(bool random, uint8_t fixedData){
 	//Use this function to take the message and transform it into a readable CAN message packet to be read
 
 	//Use the recevice function and return a random number in place of of it. Clears register as well
-	uint8_t readRXB0[1] = {0x90};
-	uint8_t RXB0Buffer[14] = {0};
-	uint16_t RXB0Data[1] = {0};
-	const char sensorName[20] = "Temp Sensor";
 
-	char outputBuffer[2];
+	GPIO_PinState status = HAL_GPIO_ReadPin(CAN_INT_GPIO_Port, CAN_INT_Pin);
 
-	//Clear RXB0
-	mcp2515writeRegister(0x2C, 0x00);
+	if (status == GPIO_PIN_RESET){
+		uint8_t readRXB0[1] = {0x90};
+		uint8_t RXB0Buffer[14] = {0};
+		uint16_t RXB0Data[1] = {0};
+		const char sensorName[20] = "Temp Sensor";
 
-	SPI1_CS_LOW();
-	HAL_SPI_Transmit(&hspi1, readRXB0, 1, 100);
-	HAL_SPI_Receive(&hspi1, RXB0Buffer, 14, 100);
-	SPI1_CS_HIGH();
+		char outputBuffer[2];
 
-	// Convert the received byte to a null-terminated string
-	outputBuffer[0] = (char)RXB0Buffer[1];
-	outputBuffer[1] = '\0'; // Null-terminator
+		//Clear RXB0
+		mcp2515writeRegister(0x2C, 0x00);
 
-	// Use the print function
-	print(outputBuffer);
+		SPI1_CS_LOW();
+		HAL_SPI_Transmit(&hspi1, readRXB0, 1, 100);
+		HAL_SPI_Receive(&hspi1, RXB0Buffer, 14, 100);
+		SPI1_CS_HIGH();
+
+		// Convert the received byte to a null-terminated string
+		outputBuffer[0] = (char)RXB0Buffer[1];
+		outputBuffer[1] = '\0'; // Null-terminator
+
+		//Returns data of the message, can be random or fixed for testing
+		if (random == true){
+			RXB0Data[0] = rand() % (255);
+		}
+		else{
+
+			RXB0Data[0] = fixedData;
+		}
 
 
+		MessageCAN canMessage = {
+			.canID = 0x35,
+			.data = RXB0Data[0],
+			.sensorName = sensorName,
+			.timeStamp = 0
+		};
 
-
-	//Returns data of the message, can be random or fixed for testing
-	if (random == true){
-		RXB0Data[0] = rand() % (255);
+		char buffer[10];
+		sprintf(buffer, "%d", canMessage.data);
+		print("message received, data:");
+		print(buffer);
 	}
 	else{
-
-		RXB0Data[0] = fixedData;
+		print("no message in buffer");
 	}
-
-
-	MessageCAN canMessage = {
-		.canID = 0x35,
-		.data = RXB0Data[0],
-		.sensorName = sensorName,
-		.timeStamp = 0
-	};
-
-	print(canMessage.data);
 
 
 	//Add message to mail queue
-	return RXB0Data;
+	//return RXB0Data;
 }
 
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+
+	print("Int Activated");
+	UNUSED(GPIO_Pin);
+	BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+	mcp2515messageAvailable();
+	xEventGroupSetBitsFromISR(messageToRead, EVENT_BIT_1, &xHigherPriorityTaskWoken);
+}
 
 /* USER CODE END 4 */
+
+/* USER CODE BEGIN Header_StartDefaultTask */
+/**
+  * @brief  Function implementing the defaultTask thread.
+  * @param  argument: Not used
+  * @retval None
+  */
+/* USER CODE END Header_StartDefaultTask */
+void StartDefaultTask(void const * argument)
+{
+  /* USER CODE BEGIN 5 */
+  /* Infinite loop */
+  for(;;)
+  {
+    print("Idle Task");
+    osDelay(500);
+
+  }
+  /* USER CODE END 5 */
+}
+
+/* USER CODE BEGIN Header_StartTask02 */
+/**
+* @brief Function implementing the myTask02 thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartTask02 */
+void StartTask02(void const * argument)
+{
+  /* USER CODE BEGIN StartTask02 */
+  /* Infinite loop */
+  for(;;)
+  {
+	  print("Task Entered");
+	  EventBits_t uxBits = xEventGroupWaitBits(messageToRead, EVENT_BIT_1, pdTRUE, pdTRUE, portMAX_DELAY);
+	  print("Task Started");
+      mcp2515readMessage(false, 100);
+      osDelay(500);
+
+  }
+  /* USER CODE END StartTask02 */
+}
+
+/**
+  * @brief  Period elapsed callback in non blocking mode
+  * @note   This function is called  when TIM1 interrupt took place, inside
+  * HAL_TIM_IRQHandler(). It makes a direct call to HAL_IncTick() to increment
+  * a global variable "uwTick" used as application time base.
+  * @param  htim : TIM handle
+  * @retval None
+  */
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+  /* USER CODE BEGIN Callback 0 */
+
+  /* USER CODE END Callback 0 */
+  if (htim->Instance == TIM1) {
+    HAL_IncTick();
+  }
+  /* USER CODE BEGIN Callback 1 */
+
+  /* USER CODE END Callback 1 */
+}
 
 /**
   * @brief  This function is executed in case of error occurrence.
