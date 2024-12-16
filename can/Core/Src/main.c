@@ -39,6 +39,7 @@
 #define SPI1_CS_HIGH() HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_SET)
 #define EVENT_BIT_0 (0 << 0)
 #define EVENT_BIT_1 (1 << 0)
+#define EVENT_BIT_2 (2 << 0)
 
 /* USER CODE END PD */
 
@@ -49,17 +50,23 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+RTC_HandleTypeDef hrtc;
+
 SPI_HandleTypeDef hspi1;
 
 UART_HandleTypeDef huart2;
 
 osThreadId defaultTaskHandle;
 osThreadId myTask02Handle;
+osThreadId sdCardMsgPostHandle;
+
 /* USER CODE BEGIN PV */
 
 EventGroupHandle_t messageToRead;
 static StaticTask_t xTimerTaskTCB;
 static StackType_t xTimerStack[configTIMER_TASK_STACK_DEPTH];
+osMailQId canMailQueueHandle;
+
 
 /* USER CODE END PV */
 
@@ -68,8 +75,10 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_SPI1_Init(void);
+static void MX_RTC_Init(void);
 void StartDefaultTask(void const * argument);
 void StartTask02(void const * argument);
+void StartTask03(void const * argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -121,6 +130,7 @@ int main(void)
   MX_GPIO_Init();
   MX_USART2_UART_Init();
   MX_SPI1_Init();
+  MX_RTC_Init();
   /* USER CODE BEGIN 2 */
   mcp2515init();
   print("Program Started");
@@ -140,7 +150,13 @@ int main(void)
   /* USER CODE END RTOS_TIMERS */
 
   /* USER CODE BEGIN RTOS_QUEUES */
-  /* add queues, ... */
+  osMailQDef(canMailQueue, 5, MessageCAN);
+  canMailQueueHandle = osMailCreate(osMailQ(canMailQueue), NULL);
+  if (canMailQueueHandle == NULL)
+  {
+      // Handle error
+      Error_Handler();
+  }
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
@@ -151,6 +167,10 @@ int main(void)
   /* definition and creation of myTask02 */
   osThreadDef(myTask02, StartTask02, osPriorityAboveNormal, 0, 128);
   myTask02Handle = osThreadCreate(osThread(myTask02), NULL);
+
+  /* definition and creation of sdCardMsgPost */
+  osThreadDef(sdCardMsgPost, StartTask03, osPriorityAboveNormal, 0, 128);
+  sdCardMsgPostHandle = osThreadCreate(osThread(sdCardMsgPost), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -191,9 +211,10 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI|RCC_OSCILLATORTYPE_LSI;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
   RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+  RCC_OscInitStruct.LSIState = RCC_LSI_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
   RCC_OscInitStruct.PLL.PLLM = 16;
@@ -218,6 +239,41 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+}
+
+/**
+  * @brief RTC Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_RTC_Init(void)
+{
+
+  /* USER CODE BEGIN RTC_Init 0 */
+
+  /* USER CODE END RTC_Init 0 */
+
+  /* USER CODE BEGIN RTC_Init 1 */
+
+  /* USER CODE END RTC_Init 1 */
+
+  /** Initialize RTC Only
+  */
+  hrtc.Instance = RTC;
+  hrtc.Init.HourFormat = RTC_HOURFORMAT_24;
+  hrtc.Init.AsynchPrediv = 127;
+  hrtc.Init.SynchPrediv = 255;
+  hrtc.Init.OutPut = RTC_OUTPUT_DISABLE;
+  hrtc.Init.OutPutPolarity = RTC_OUTPUT_POLARITY_HIGH;
+  hrtc.Init.OutPutType = RTC_OUTPUT_TYPE_OPENDRAIN;
+  if (HAL_RTC_Init(&hrtc) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN RTC_Init 2 */
+
+  /* USER CODE END RTC_Init 2 */
+
 }
 
 /**
@@ -387,6 +443,24 @@ uint8_t mcp2515readRegister(uint8_t address){
 	return rxBuffer[2];
 }
 
+
+uint16_t Timestamp(void) {
+    RTC_TimeTypeDef sTime = {0};
+    uint16_t timeValue = 0;
+
+    // Retrieve time from RTC
+    if (HAL_RTC_GetTime(&hrtc, &sTime, RTC_FORMAT_BIN) == HAL_OK) {
+        // Convert hours and minutes into seconds, add seconds and milliseconds
+        timeValue = (sTime.Hours * 3600) + (sTime.Minutes * 60) + sTime.Seconds;
+        // RTC provides sub-second information; scale to milliseconds
+        timeValue += (1000 - sTime.SubSeconds) / (1000 / 1024);
+    }
+
+    return timeValue;
+}
+
+
+
 void mcp2515setTiming(void){
 	// Example configuration for 500 kbps with 8 MHz oscillator
 	// Calculate CNF1, CNF2, CNF3 using the MCP2515 datasheet
@@ -492,6 +566,7 @@ void mcp2515readMessage(bool random, uint8_t fixedData){
 
 	//Use the recevice function and return a random number in place of of it. Clears register as well
 
+	//Sanity check for GPIO pin
 	GPIO_PinState status = HAL_GPIO_ReadPin(CAN_INT_GPIO_Port, CAN_INT_Pin);
 
 	if (status == GPIO_PIN_RESET){
@@ -523,21 +598,60 @@ void mcp2515readMessage(bool random, uint8_t fixedData){
 			RXB0Data[0] = fixedData;
 		}
 
+		uint16_t timestamp = Timestamp();
 
-		MessageCAN canMessage = {
-			.canID = 0x35,
-			.data = RXB0Data[0],
-			.sensorName = sensorName,
-			.timeStamp = 0
-		};
+		//Allocate a memory space for the structure defined, nothing inside it yet though
 
+		MessageCAN *msg = (MessageCAN *)osMailAlloc(canMailQueueHandle, osWaitForever);
+
+		if (msg == NULL){
+
+			print("Error with allocating mail space");
+			Error_Handler();
+		}
+		else{
+			//Fill the Mail msgpointer with parameters
+			msg ->canID = 0x35;
+			msg->data = RXB0Data[0];
+			strncpy(msg->sensorName, sensorName, sizeof(msg->sensorName) - 1);
+			msg->sensorName[sizeof(msg->sensorName) - 1] = '\0';  // Null-terminate to be safe
+			msg->timeStamp = timestamp;
+		}
+
+
+		char bufffer[100];
+		//Send the mail into the canMailQueue
+		if (osMailPut(canMailQueueHandle, msg) == osOK){
+			snprintf(bufffer, sizeof(bufffer), "Message Pointer Address freed: %p at time %d", (void *)msg,
+					msg->timeStamp);
+			print(bufffer);
+		}
+		else{
+			osMailFree(canMailQueueHandle, msg);
+			print("Failed to put mail in the queue");
+			Error_Handler();
+
+
+		}
+
+
+		if (osMessageAvailableSpace(canMailQueueHandle) ==  0){
+
+			xEventGroupSetBits(messageToRead, EVENT_BIT_2);
+		}
+		//Print confirmation to terminal
 		char buffer[10];
-		sprintf(buffer, "%d", canMessage.data);
+		sprintf(buffer, "%d", msg->data);
 		print("message received, data:");
 		print(buffer);
+
+		//Print out memory it is stored at
 	}
+
+	//If no message buffer, should not happen
 	else{
-		print("no message in buffer");
+		print("no message in buffer, should not happen error");
+		Error_Handler();
 	}
 
 
@@ -545,6 +659,53 @@ void mcp2515readMessage(bool random, uint8_t fixedData){
 	//return RXB0Data;
 }
 
+void sdCardMsgPost(void){
+
+
+	//Create event to read the mail
+
+	while(1){
+		osEvent event = osMailGet(canMailQueueHandle, HAL_MAX_DELAY);  // Non-blocking
+
+		if (event.status == osEventMail) {
+			// Cast the retrieved pointer to your structure type
+			MessageCAN *msg = (MessageCAN*)event.value.p;
+
+			// Process the message (e.g., print or handle data)
+			char buffer[100];
+
+			// Print message details using `print`
+			snprintf(buffer, sizeof(buffer), "Processing Message: CAN ID = 0x%X, Data = %d, Timestamp = %d",
+					 msg->canID, msg->data, msg->timeStamp);
+			print(buffer);
+
+			// Print pointer address of the message
+			snprintf(buffer, sizeof(buffer), "Message Pointer Address freed: %p", (void *)msg);
+			print(buffer);
+
+			// Free the message memory after processing
+			osMailFree(canMailQueueHandle, msg);
+
+			//Printout the message ID when this happens
+
+			//TODO
+			sdCardSpiTransmission();
+
+
+		} else {
+			// Exit loop if no more messages are in the queue
+			break;
+		}
+
+	}
+}
+
+
+void sdCardSpiTransmission(void){
+	//Function to take in the buffer and transmit through SPI
+	//Need to use an SPI mutex for multiple SPI operations
+	return;
+}
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
 
@@ -598,6 +759,35 @@ void StartTask02(void const * argument)
 
   }
   /* USER CODE END StartTask02 */
+}
+
+/* USER CODE BEGIN Header_StartTask03 */
+/**
+* @brief Function implementing the sdCardMsgPost thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartTask03 */
+void StartTask03(void const * argument)
+{
+  /* USER CODE BEGIN StartTask03 */
+  /* Infinite loop */
+  for(;;)
+  {
+	 EventBits_t uxBits = xEventGroupWaitBits(messageToRead, EVENT_BIT_2, pdTRUE, pdTRUE, portMAX_DELAY);
+	 sdCardMsgPost();
+	 if (messageToRead == 0x02){
+		 osThreadYield();
+	 }
+    //if osDelayUntil (2000) or mailQueueFullEvent
+    //then read all messages from the mail queue into local array struct
+    //post all messages to UART?
+    //crtical section??
+
+
+
+  }
+  /* USER CODE END StartTask03 */
 }
 
 /**
