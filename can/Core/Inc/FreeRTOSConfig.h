@@ -69,15 +69,7 @@
 #define configUSE_16_BIT_TICKS                   0
 #define configUSE_MUTEXES                        1
 #define configQUEUE_REGISTRY_SIZE                8
-
 #define configUSE_PORT_OPTIMISED_TASK_SELECTION  1
-#define configTIMER_TASK_STACK_DEPTH 			 128
-#define configUSE_TIMERS 1
-#define configTIMER_TASK_PRIORITY (configMAX_PRIORITIES - 1)  // Timer task priority
-#define configTIMER_QUEUE_LENGTH 10                          // Timer queue length
-#define configTIMER_TASK_STACK_DEPTH 128                     // Stack depth for the timer task
-
-
 /* USER CODE BEGIN MESSAGE_BUFFER_LENGTH_TYPE */
 /* Defaults to size_t for backward compatibility, but can be changed
    if lengths will always be less than the number of bytes in a size_t. */
@@ -98,8 +90,6 @@ to exclude the API function. */
 #define INCLUDE_vTaskDelayUntil              1
 #define INCLUDE_vTaskDelay                   1
 #define INCLUDE_xTaskGetSchedulerState       1
-#define INCLUDE_xTimerPendFunctionCall 		 1
-
 
 /* Cortex-M specific definitions. */
 #ifdef __NVIC_PRIO_BITS
@@ -144,6 +134,14 @@ standard names. */
 
 /* USER CODE BEGIN Defines */
 /* Section where parameter definitions can be added (for instance, to override default ones in FreeRTOS.h) */
+#define configUSE_PORT_OPTIMISED_TASK_SELECTION  1
+#define configTIMER_TASK_STACK_DEPTH 			 128
+#define configUSE_TIMERS 1
+#define configTIMER_TASK_PRIORITY (configMAX_PRIORITIES - 1)  // Timer task priority
+#define configTIMER_QUEUE_LENGTH 10                          // Timer queue length
+#define configTIMER_TASK_STACK_DEPTH 128                     // Stack depth for the timer task
+#define INCLUDE_xTimerPendFunctionCall 		 1
+
 /* USER CODE END Defines */
 
 #endif /* FREERTOS_CONFIG_H */

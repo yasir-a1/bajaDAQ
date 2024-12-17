@@ -24,6 +24,8 @@
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
 #include <stdbool.h>
+#include "queue.h"
+#include <string.h>
 #include "event_groups.h"
 
 /* USER CODE END Includes */
@@ -38,8 +40,10 @@
 #define SPI1_CS_LOW()  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_RESET)
 #define SPI1_CS_HIGH() HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_SET)
 #define EVENT_BIT_0 (0 << 0)
-#define EVENT_BIT_1 (1 << 0)
-#define EVENT_BIT_2 (2 << 0)
+#define EVENT_BIT_3 (1 << 3)
+#define EVENT_BIT_2 (1 << 2)
+#define EVENT_BIT_1 (1 << 1)
+
 
 /* USER CODE END PD */
 
@@ -59,13 +63,14 @@ UART_HandleTypeDef huart2;
 osThreadId defaultTaskHandle;
 osThreadId myTask02Handle;
 osThreadId sdCardMsgPostHandle;
+osThreadId messageAvailablHandle;
 
+uint16_t counter = 0;
 /* USER CODE BEGIN PV */
 
 EventGroupHandle_t messageToRead;
 static StaticTask_t xTimerTaskTCB;
 static StackType_t xTimerStack[configTIMER_TASK_STACK_DEPTH];
-osMailQId canMailQueueHandle;
 
 
 /* USER CODE END PV */
@@ -79,6 +84,7 @@ static void MX_RTC_Init(void);
 void StartDefaultTask(void const * argument);
 void StartTask02(void const * argument);
 void StartTask03(void const * argument);
+void StartTask04(void const * argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -96,6 +102,16 @@ void vApplicationGetTimerTaskMemory(StaticTask_t **ppxTimerTaskTCBBuffer,
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+/******QUEUE HANDLER********/
+xQueueHandle MessageQueueHandle;
+
+///*****Task Handler******/
+//xTaskHandle defaultTaskHandle;
+//xTaskHandle myTask02Handle;
+//xTaskHandle sdCardMsgPostHandle;
+//xTaskHandle messageAvailablHandle;
+
 
 /* USER CODE END 0 */
 
@@ -132,6 +148,8 @@ int main(void)
   MX_SPI1_Init();
   MX_RTC_Init();
   /* USER CODE BEGIN 2 */
+  print("MCP2515 init Started");
+
   mcp2515init();
   print("Program Started");
 
@@ -150,27 +168,30 @@ int main(void)
   /* USER CODE END RTOS_TIMERS */
 
   /* USER CODE BEGIN RTOS_QUEUES */
-  osMailQDef(canMailQueue, 5, MessageCAN);
-  canMailQueueHandle = osMailCreate(osMailQ(canMailQueue), NULL);
-  if (canMailQueueHandle == NULL)
-  {
-      // Handle error
-      Error_Handler();
+  MessageQueueHandle = xQueueCreate(3, sizeof(MessageCAN));
+
+  if (MessageQueueHandle == 0){
+	  print("Error Creating Queue");
+	  Error_Handler();
   }
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
   /* definition and creation of defaultTask */
-  osThreadDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 128);
+  osThreadDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 256);
   defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
 
   /* definition and creation of myTask02 */
-  osThreadDef(myTask02, StartTask02, osPriorityAboveNormal, 0, 128);
+  osThreadDef(myTask02, StartTask02, osPriorityAboveNormal, 0, 256);
   myTask02Handle = osThreadCreate(osThread(myTask02), NULL);
 
   /* definition and creation of sdCardMsgPost */
-  osThreadDef(sdCardMsgPost, StartTask03, osPriorityAboveNormal, 0, 128);
+  osThreadDef(sdCardMsgPost, StartTask03, osPriorityAboveNormal, 0, 256);
   sdCardMsgPostHandle = osThreadCreate(osThread(sdCardMsgPost), NULL);
+
+  /* definition and creation of messageAvailabl */
+  osThreadDef(messageAvailabl, StartTask04, osPriorityAboveNormal, 0, 256);
+  messageAvailablHandle = osThreadCreate(osThread(messageAvailabl), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -415,6 +436,7 @@ void print(const char* buffer) {
     // Transmit the modified string over UART
     HAL_UART_Transmit(&huart2, (uint8_t*)tempBuffer, strlen(tempBuffer), 100);
 }
+
 void mcp2515writeRegister(uint8_t address, uint8_t data){
 
 	uint8_t txBuffer[3] = {0x02, address, data};
@@ -507,7 +529,7 @@ void mcp2515init(void){
 	uint8_t	buffer0ConfigResult = mcp2515readRegister(0x60);
 
 	if (buffer0ConfigResult != 0x60){
-		Error_Handler();
+		//Error_Handler();
 	}
 //	if (configResult != 0x80){
 //
@@ -553,14 +575,20 @@ void mcp2515messageAvailable(void){
 	mcp2515writeRegister(0x2C, 0x01);
 
 	if (result != 0x01){
-		Error_Handler;
+		//Error_Handler();
 	}
 
 	status1 = HAL_GPIO_ReadPin(CAN_INT_GPIO_Port, CAN_INT_Pin);
+
 }
 
 
 void mcp2515readMessage(bool random, uint8_t fixedData){
+
+	/*
+	 * This function should decode the CAN message into a heap memory pointer to a MessageCAN struct
+	 * Pointer then needs to pass the message into the mail queue then check queue size
+	 */
 
 	//Use this function to take the message and transform it into a readable CAN message packet to be read
 
@@ -573,9 +601,6 @@ void mcp2515readMessage(bool random, uint8_t fixedData){
 		uint8_t readRXB0[1] = {0x90};
 		uint8_t RXB0Buffer[14] = {0};
 		uint16_t RXB0Data[1] = {0};
-		const char sensorName[20] = "Temp Sensor";
-
-		char outputBuffer[2];
 
 		//Clear RXB0
 		mcp2515writeRegister(0x2C, 0x00);
@@ -584,10 +609,6 @@ void mcp2515readMessage(bool random, uint8_t fixedData){
 		HAL_SPI_Transmit(&hspi1, readRXB0, 1, 100);
 		HAL_SPI_Receive(&hspi1, RXB0Buffer, 14, 100);
 		SPI1_CS_HIGH();
-
-		// Convert the received byte to a null-terminated string
-		outputBuffer[0] = (char)RXB0Buffer[1];
-		outputBuffer[1] = '\0'; // Null-terminator
 
 		//Returns data of the message, can be random or fixed for testing
 		if (random == true){
@@ -598,52 +619,60 @@ void mcp2515readMessage(bool random, uint8_t fixedData){
 			RXB0Data[0] = fixedData;
 		}
 
-		uint16_t timestamp = Timestamp();
+		//uint16_t timestamp = Timestamp();
+		counter += 1;
 
-		//Allocate a memory space for the structure defined, nothing inside it yet though
 
-		MessageCAN *msg = (MessageCAN *)osMailAlloc(canMailQueueHandle, osWaitForever);
+		//Create Pointer to the MessageCAN Struct
+		MessageCAN *ptrToStruct;
 
-		if (msg == NULL){
+		ptrToStruct = pvPortMalloc(sizeof(MessageCAN)); //Returns Object not address
 
-			print("Error with allocating mail space");
-			Error_Handler();
+		ptrToStruct->canID = 0x35;
+		ptrToStruct->data = RXB0Data[0];  //DOES NOT DECAY TO POINTER because of [0]
+		ptrToStruct->timeStamp = counter;
+		ptrToStruct->sensorName = "Temp Sensor";
+
+		//Send to QUeue
+		if (xQueueSend(MessageQueueHandle, &ptrToStruct, portMAX_DELAY) == pdPASS)
+		{
+			print("Message in Queue");
 		}
 		else{
-			//Fill the Mail msgpointer with parameters
-			msg ->canID = 0x35;
-			msg->data = RXB0Data[0];
-			strncpy(msg->sensorName, sensorName, sizeof(msg->sensorName) - 1);
-			msg->sensorName[sizeof(msg->sensorName) - 1] = '\0';  // Null-terminate to be safe
-			msg->timeStamp = timestamp;
+
+			vPortFree(&ptrToStruct);
 		}
 
+		uint32_t MsgInQueue = uxQueueSpacesAvailable(MessageQueueHandle);
 
-		char bufffer[100];
-		//Send the mail into the canMailQueue
-		if (osMailPut(canMailQueueHandle, msg) == osOK){
-			snprintf(bufffer, sizeof(bufffer), "Message Pointer Address freed: %p at time %d", (void *)msg,
-					msg->timeStamp);
-			print(bufffer);
+		char *ptr;
+		ptr = pvPortMalloc(100 * sizeof(char));
+		sprintf(ptr, "Number of spaces in Queue: %u", MsgInQueue);
+		print(ptr);
+
+
+		if (MsgInQueue == 0){
+
+			print("Queue is Full");
+			xEventGroupSetBits(messageToRead, EVENT_BIT_3);
+			osThreadYield();
 		}
-		else{
-			osMailFree(canMailQueueHandle, msg);
-			print("Failed to put mail in the queue");
-			Error_Handler();
 
+//
+//		uint32_t msgAvailable = osMessageAvailableSpace(canMailQueueHandle);
+//
+//		if (msgAvailable ==  0){
+//
+//			xEventGroupSetBits(messageToRead, EVENT_BIT_3);
+//			print("Mail Queue is full, set bits for event");
+//			osThreadYield();
+//		}
+//		//Print confirmation to terminal
+//		char buffer[10];
+//		sprintf(buffer, "%d", msg->data);
 
-		}
+		print("message received, data: 100");
 
-
-		if (osMessageAvailableSpace(canMailQueueHandle) ==  0){
-
-			xEventGroupSetBits(messageToRead, EVENT_BIT_2);
-		}
-		//Print confirmation to terminal
-		char buffer[10];
-		sprintf(buffer, "%d", msg->data);
-		print("message received, data:");
-		print(buffer);
 
 		//Print out memory it is stored at
 	}
@@ -654,50 +683,69 @@ void mcp2515readMessage(bool random, uint8_t fixedData){
 		Error_Handler();
 	}
 
-
-	//Add message to mail queue
-	//return RXB0Data;
 }
 
 void sdCardMsgPost(void){
+	/*
+	 * This function should be called whenever the mail queue is full by responding to an event
+	 * It should process every message in the queue, post it to the SD card using a for-loop or print out to terminal
+	 * Free all memory as messages are processed
+	 */
 
+	MessageCAN *ptrToRxMsg;
+	char *ptr;
 
-	//Create event to read the mail
+	print("In SD Msg post function");
 
 	while(1){
-		osEvent event = osMailGet(canMailQueueHandle, HAL_MAX_DELAY);  // Non-blocking
 
-		if (event.status == osEventMail) {
-			// Cast the retrieved pointer to your structure type
-			MessageCAN *msg = (MessageCAN*)event.value.p;
+		if (xQueueReceive(MessageQueueHandle, &ptrToRxMsg, portMAX_DELAY) == pdPASS ){
 
-			// Process the message (e.g., print or handle data)
-			char buffer[100];
-
-			// Print message details using `print`
-			snprintf(buffer, sizeof(buffer), "Processing Message: CAN ID = 0x%X, Data = %d, Timestamp = %d",
-					 msg->canID, msg->data, msg->timeStamp);
-			print(buffer);
-
-			// Print pointer address of the message
-			snprintf(buffer, sizeof(buffer), "Message Pointer Address freed: %p", (void *)msg);
-			print(buffer);
-
-			// Free the message memory after processing
-			osMailFree(canMailQueueHandle, msg);
-
-			//Printout the message ID when this happens
-
-			//TODO
-			sdCardSpiTransmission();
-
-
-		} else {
-			// Exit loop if no more messages are in the queue
+			ptr = pvPortMalloc(100 * sizeof(char));
+			sprintf (ptr, "Received Data: %u at Time: %u from %s", ptrToRxMsg->data, ptrToRxMsg->timeStamp, ptrToRxMsg->sensorName);
+			print(ptr);
+			vPortFree(ptr);
+			vPortFree(ptrToRxMsg);
+		}
+		else{
 			break;
 		}
-
 	}
+
+//	while(1){
+//		osEvent event = osMailGet(canMailQueueHandle, HAL_MAX_DELAY);  // Non-blocking
+//
+//		if (event.status == osEventMail) {
+//			// Cast the retrieved pointer to your structure type
+//			MessageCAN *msg = (MessageCAN*)event.value.p;
+//
+//			// Process the message (e.g., print or handle data)
+//			char buffer[100];
+//
+//			// Print message details using `print`
+//			snprintf(buffer, sizeof(buffer), "Processing Message: CAN ID = 0x%X, Data = %d, Timestamp = %d",
+//					 msg->canID, msg->data, msg->timeStamp);
+//			print(buffer);
+//
+//			// Print pointer address of the message
+//			snprintf(buffer, sizeof(buffer), "Message Pointer Address freed: %p", (void *)msg);
+//			print(buffer);
+//
+//			// Free the message memory after processing
+//			osMailFree(canMailQueueHandle, msg);
+//
+//			//Printout the message ID when this happens
+//
+//			//TODO
+//			sdCardSpiTransmission();
+//
+//
+//		} else {
+//			// Exit loop if no more messages are in the queue
+//			break;
+//		}
+//
+//	}
 }
 
 
@@ -706,15 +754,19 @@ void sdCardSpiTransmission(void){
 	//Need to use an SPI mutex for multiple SPI operations
 	return;
 }
+
+
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
 
-	print("Int Activated");
+
 	UNUSED(GPIO_Pin);
 	BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-	mcp2515messageAvailable();
 	xEventGroupSetBitsFromISR(messageToRead, EVENT_BIT_1, &xHigherPriorityTaskWoken);
 }
+
+
+
 
 /* USER CODE END 4 */
 
@@ -751,11 +803,14 @@ void StartTask02(void const * argument)
   /* Infinite loop */
   for(;;)
   {
-	  print("Task Entered");
-	  EventBits_t uxBits = xEventGroupWaitBits(messageToRead, EVENT_BIT_1, pdTRUE, pdTRUE, portMAX_DELAY);
+	  //print("Task 2 Entered");
+	  EventBits_t uxBits = xEventGroupWaitBits(messageToRead, EVENT_BIT_2, pdTRUE, pdTRUE, portMAX_DELAY);
+	  //if (ux)
 	  print("Task Started");
       mcp2515readMessage(false, 100);
-      osDelay(500);
+      EventBits_t currentBits = xEventGroupGetBits(messageToRead);  //DEBUG
+   	  osDelay(50);
+
 
   }
   /* USER CODE END StartTask02 */
@@ -774,11 +829,15 @@ void StartTask03(void const * argument)
   /* Infinite loop */
   for(;;)
   {
-	 EventBits_t uxBits = xEventGroupWaitBits(messageToRead, EVENT_BIT_2, pdTRUE, pdTRUE, portMAX_DELAY);
+	 //print("Task 3 Entered");
+	 EventBits_t uxBits = xEventGroupWaitBits(messageToRead, EVENT_BIT_3, pdTRUE, pdTRUE, portMAX_DELAY); //Or change to IF QueueFull == true then ELSE osYield();
+	 print("Task 3 Started");
 	 sdCardMsgPost();
-	 if (messageToRead == 0x02){
-		 osThreadYield();
-	 }
+	 EventBits_t currentBits = xEventGroupGetBits(messageToRead);
+	 osDelay(50);
+//	 if (messageToRead == 0x02){
+//		 osThreadYield();
+//	 }
     //if osDelayUntil (2000) or mailQueueFullEvent
     //then read all messages from the mail queue into local array struct
     //post all messages to UART?
@@ -788,6 +847,34 @@ void StartTask03(void const * argument)
 
   }
   /* USER CODE END StartTask03 */
+}
+
+/* USER CODE BEGIN Header_StartTask04 */
+/**
+* @brief Function implementing the messageAvailabl thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartTask04 */
+void StartTask04(void const * argument)
+{
+  /* USER CODE BEGIN StartTask04 */
+  /* Infinite loop */
+  for(;;)
+  {
+	  EventBits_t uxBits = xEventGroupWaitBits(messageToRead, EVENT_BIT_1, pdTRUE, pdTRUE, portMAX_DELAY);
+	  print("Task 4 started");
+	  mcp2515messageAvailable();
+	  EventBits_t currentBits = xEventGroupGetBits(messageToRead);
+	  uxBits = xEventGroupSetBits(messageToRead, EVENT_BIT_2);
+	  currentBits = xEventGroupGetBits(messageToRead);
+	  osDelay(50);
+
+
+
+
+  }
+  /* USER CODE END StartTask04 */
 }
 
 /**

@@ -41,7 +41,7 @@ typedef struct {
 	uint8_t canID;
 	uint16_t data;
 	uint16_t timeStamp;
-	char sensorName[30];
+	char *sensorName;
 }MessageCAN;
 
 /* USER CODE END ET */
