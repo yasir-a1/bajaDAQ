@@ -64,13 +64,13 @@ osThreadId defaultTaskHandle;
 osThreadId myTask02Handle;
 osThreadId sdCardMsgPostHandle;
 osThreadId messageAvailablHandle;
-
-uint16_t counter = 0;
+osMutexId uartMutexHandle;
 /* USER CODE BEGIN PV */
 
 EventGroupHandle_t messageToRead;
 static StaticTask_t xTimerTaskTCB;
 static StackType_t xTimerStack[configTIMER_TASK_STACK_DEPTH];
+uint16_t counter = 0;
 
 
 /* USER CODE END PV */
@@ -148,12 +148,13 @@ int main(void)
   MX_SPI1_Init();
   MX_RTC_Init();
   /* USER CODE BEGIN 2 */
-  print("MCP2515 init Started");
-
-  mcp2515init();
-  print("Program Started");
 
   /* USER CODE END 2 */
+
+  /* Create the mutex(es) */
+  /* definition and creation of uartMutex */
+  osMutexDef(uartMutex);
+  uartMutexHandle = osMutexCreate(osMutex(uartMutex));
 
   /* USER CODE BEGIN RTOS_MUTEX */
   /* add mutexes, ... */
@@ -168,7 +169,7 @@ int main(void)
   /* USER CODE END RTOS_TIMERS */
 
   /* USER CODE BEGIN RTOS_QUEUES */
-  MessageQueueHandle = xQueueCreate(3, sizeof(MessageCAN));
+  MessageQueueHandle = xQueueCreate(5, sizeof(MessageCAN*));
 
   if (MessageQueueHandle == 0){
 	  print("Error Creating Queue");
@@ -182,11 +183,11 @@ int main(void)
   defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
 
   /* definition and creation of myTask02 */
-  osThreadDef(myTask02, StartTask02, osPriorityAboveNormal, 0, 256);
+  osThreadDef(myTask02, StartTask02, osPriorityAboveNormal, 0, 512);
   myTask02Handle = osThreadCreate(osThread(myTask02), NULL);
 
   /* definition and creation of sdCardMsgPost */
-  osThreadDef(sdCardMsgPost, StartTask03, osPriorityAboveNormal, 0, 256);
+  osThreadDef(sdCardMsgPost, StartTask03, osPriorityAboveNormal, 0, 512);
   sdCardMsgPostHandle = osThreadCreate(osThread(sdCardMsgPost), NULL);
 
   /* definition and creation of messageAvailabl */
@@ -194,8 +195,9 @@ int main(void)
   messageAvailablHandle = osThreadCreate(osThread(messageAvailabl), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
-  /* add threads, ... */
-  /* USER CODE END RTOS_THREADS */
+  print("MCP2515 init Started");
+  mcp2515init();
+  print("Program Started");  /* USER CODE END RTOS_THREADS */
 
   /* Start scheduler */
   osKernelStart();
@@ -204,6 +206,11 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+
+
+
+
+
   while (1)
   {
 	  //mcp2515messageAvailable();
@@ -418,8 +425,59 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+
+void LogStackUsage(const char* taskName, osThreadId thread_id) {
+    // Cast CMSIS-RTOS thread ID to FreeRTOS TaskHandle_t
+    TaskHandle_t freertosTaskHandle = (TaskHandle_t)thread_id;
+
+    // Get the high water mark (minimum unused stack) in words
+    UBaseType_t highWaterMark = uxTaskGetStackHighWaterMark(freertosTaskHandle);
+
+    // Convert remaining stack from words to bytes
+    uint32_t remainingStackBytes = highWaterMark * sizeof(StackType_t);
+
+    // Prepare the log message
+    char *buffer;
+    buffer = pvPortMalloc(100 * (sizeof(char)));
+    sprintf(buffer, "%s Remaining Stack: %lu bytes", taskName, (unsigned long)remainingStackBytes);
+    vPortFree(buffer);
+
+    // Log via UART
+    print(buffer);
+}
+
+/* Define the Heap Monitor Task */
+void HeapMonitorTask(void)
+{
+
+        size_t freeHeap = xPortGetFreeHeapSize();
+        size_t minFreeHeap = xPortGetMinimumEverFreeHeapSize();
+        //size_t totalHeap = xPortGetTotalHeapSize();
+
+        char buffer[100];
+        sprintf(buffer, "Heap: Free %lu bytes, Min Free %lu bytes\r\n",
+                (unsigned long)freeHeap,
+                (unsigned long)minFreeHeap);
+        print(buffer);
+}
+
+
+
+void vApplicationStackOverflowHook(xTaskHandle xTask, signed char *pcTaskName)
+{
+   print("Stack Overflow");
+}
+
+
+void vApplicationMallocFailedHook(void)
+{
+   print("Malloc Failed");
+}
+
+
 void print(const char* buffer) {
     // Calculate the string length
+	if (osMutexWait(uartMutexHandle, osWaitForever) == osOK){
     size_t length = strlen(buffer);
 
     // Add space for the new line and carriage return
@@ -435,6 +493,9 @@ void print(const char* buffer) {
 
     // Transmit the modified string over UART
     HAL_UART_Transmit(&huart2, (uint8_t*)tempBuffer, strlen(tempBuffer), 100);
+    osMutexRelease(uartMutexHandle);
+	}
+
 }
 
 void mcp2515writeRegister(uint8_t address, uint8_t data){
@@ -627,10 +688,14 @@ void mcp2515readMessage(bool random, uint8_t fixedData){
 		MessageCAN *ptrToStruct;
 
 		ptrToStruct = pvPortMalloc(sizeof(MessageCAN)); //Returns Object not address
+		if (ptrToStruct == NULL) {
+		    print("Memory allocation failed for can msg");
+		    Error_Handler();
+		}
 
 		ptrToStruct->canID = 0x35;
 		ptrToStruct->data = RXB0Data[0];  //DOES NOT DECAY TO POINTER because of [0]
-		ptrToStruct->timeStamp = counter;
+		ptrToStruct->		timeStamp = counter;
 		ptrToStruct->sensorName = "Temp Sensor";
 
 		//Send to QUeue
@@ -640,38 +705,39 @@ void mcp2515readMessage(bool random, uint8_t fixedData){
 		}
 		else{
 
-			vPortFree(&ptrToStruct);
+			vPortFree(ptrToStruct);
+			print("Failed to put message in Queue");
 		}
 
 		uint32_t MsgInQueue = uxQueueSpacesAvailable(MessageQueueHandle);
 
 		char *ptr;
 		ptr = pvPortMalloc(100 * sizeof(char));
+		if (ptr == NULL) {
+				    print("Memory allocation failed for msg in queue number");
+				    Error_Handler();
+				}
 		sprintf(ptr, "Number of spaces in Queue: %u", MsgInQueue);
 		print(ptr);
+		vPortFree(ptr);
+		ptr = NULL;
 
 
-		if (MsgInQueue == 0){
+//		char *ptrr;
+//		ptrr = pvPortMalloc(100 * sizeof(char));
+//		sprintf(ptrr, "Data: %u from Sensor: %s", ptrToStruct->data, ptrToStruct->sensorName);
+//		print(ptrr);
+//		vPortFree(ptrr);
+//		ptrr = NULL;
+
+		if (MsgInQueue == 0){    //
 
 			print("Queue is Full");
 			xEventGroupSetBits(messageToRead, EVENT_BIT_3);
 			osThreadYield();
 		}
 
-//
-//		uint32_t msgAvailable = osMessageAvailableSpace(canMailQueueHandle);
-//
-//		if (msgAvailable ==  0){
-//
-//			xEventGroupSetBits(messageToRead, EVENT_BIT_3);
-//			print("Mail Queue is full, set bits for event");
-//			osThreadYield();
-//		}
-//		//Print confirmation to terminal
-//		char buffer[10];
-//		sprintf(buffer, "%d", msg->data);
 
-		print("message received, data: 100");
 
 
 		//Print out memory it is stored at
@@ -692,60 +758,32 @@ void sdCardMsgPost(void){
 	 * Free all memory as messages are processed
 	 */
 
-	MessageCAN *ptrToRxMsg;
-	char *ptr;
 
-	print("In SD Msg post function");
 
-	while(1){
+	if (uxQueueSpacesAvailable(MessageQueueHandle) == 0){
 
-		if (xQueueReceive(MessageQueueHandle, &ptrToRxMsg, portMAX_DELAY) == pdPASS ){
+		MessageCAN *ptrToRxMsg;
+		char *ptr;
 
-			ptr = pvPortMalloc(100 * sizeof(char));
-			sprintf (ptr, "Received Data: %u at Time: %u from %s", ptrToRxMsg->data, ptrToRxMsg->timeStamp, ptrToRxMsg->sensorName);
-			print(ptr);
-			vPortFree(ptr);
-			vPortFree(ptrToRxMsg);
-		}
-		else{
-			break;
+		while(uxQueueMessagesWaiting(MessageQueueHandle) != 0){			//     ////Make this a for loop for sizeof messages waiting
+
+			print("In SD Msg post function");
+
+			if (xQueueReceive(MessageQueueHandle, &ptrToRxMsg, portMAX_DELAY) == pdPASS ){
+
+				ptr = pvPortMalloc(100 * sizeof(char));
+				if (ptr == NULL) {
+							print("Memory allocation failed for sd card msg");
+							Error_Handler();
+				}
+				sprintf (ptr, "Received Data: %u at Time: %u from %s", ptrToRxMsg->data, ptrToRxMsg->timeStamp, ptrToRxMsg->sensorName);
+				print(ptr);
+				vPortFree(ptr);
+				vPortFree(ptrToRxMsg);
+			}
+
 		}
 	}
-
-//	while(1){
-//		osEvent event = osMailGet(canMailQueueHandle, HAL_MAX_DELAY);  // Non-blocking
-//
-//		if (event.status == osEventMail) {
-//			// Cast the retrieved pointer to your structure type
-//			MessageCAN *msg = (MessageCAN*)event.value.p;
-//
-//			// Process the message (e.g., print or handle data)
-//			char buffer[100];
-//
-//			// Print message details using `print`
-//			snprintf(buffer, sizeof(buffer), "Processing Message: CAN ID = 0x%X, Data = %d, Timestamp = %d",
-//					 msg->canID, msg->data, msg->timeStamp);
-//			print(buffer);
-//
-//			// Print pointer address of the message
-//			snprintf(buffer, sizeof(buffer), "Message Pointer Address freed: %p", (void *)msg);
-//			print(buffer);
-//
-//			// Free the message memory after processing
-//			osMailFree(canMailQueueHandle, msg);
-//
-//			//Printout the message ID when this happens
-//
-//			//TODO
-//			sdCardSpiTransmission();
-//
-//
-//		} else {
-//			// Exit loop if no more messages are in the queue
-//			break;
-//		}
-//
-//	}
 }
 
 
@@ -783,8 +821,10 @@ void StartDefaultTask(void const * argument)
   /* Infinite loop */
   for(;;)
   {
-    print("Idle Task");
-    osDelay(500);
+    //print("Idle Task");
+    //LogStackUsage("Idle Task", defaultTaskHandle);
+    //HeapMonitorTask();
+    osDelay(1000);
 
   }
   /* USER CODE END 5 */
@@ -809,8 +849,7 @@ void StartTask02(void const * argument)
 	  print("Task Started");
       mcp2515readMessage(false, 100);
       EventBits_t currentBits = xEventGroupGetBits(messageToRead);  //DEBUG
-   	  osDelay(50);
-
+      LogStackUsage("Read Message Task", myTask02Handle);
 
   }
   /* USER CODE END StartTask02 */
@@ -833,8 +872,13 @@ void StartTask03(void const * argument)
 	 EventBits_t uxBits = xEventGroupWaitBits(messageToRead, EVENT_BIT_3, pdTRUE, pdTRUE, portMAX_DELAY); //Or change to IF QueueFull == true then ELSE osYield();
 	 print("Task 3 Started");
 	 sdCardMsgPost();
+	 xEventGroupSetBits(messageToRead, EVENT_BIT_0);
 	 EventBits_t currentBits = xEventGroupGetBits(messageToRead);
-	 osDelay(50);
+	 if (currentBits == 0x04){
+		 print("Bits not reset for event flag");
+		 Error_Handler();
+	 }
+     LogStackUsage("SD Card message Post", sdCardMsgPostHandle);
 //	 if (messageToRead == 0x02){
 //		 osThreadYield();
 //	 }
@@ -868,6 +912,7 @@ void StartTask04(void const * argument)
 	  EventBits_t currentBits = xEventGroupGetBits(messageToRead);
 	  uxBits = xEventGroupSetBits(messageToRead, EVENT_BIT_2);
 	  currentBits = xEventGroupGetBits(messageToRead);
+      LogStackUsage("Avialable Message Task", messageAvailablHandle);
 	  osDelay(50);
 
 
@@ -907,6 +952,8 @@ void Error_Handler(void)
   /* USER CODE BEGIN Error_Handler_Debug */
   /* User can add his own implementation to report the HAL error return state */
   __disable_irq();
+
+
   while (1)
   {
   }
