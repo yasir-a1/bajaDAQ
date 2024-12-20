@@ -169,7 +169,7 @@ int main(void)
   /* USER CODE END RTOS_TIMERS */
 
   /* USER CODE BEGIN RTOS_QUEUES */
-  MessageQueueHandle = xQueueCreate(5, sizeof(MessageCAN*));
+  MessageQueueHandle = xQueueCreate(3, sizeof(MessageCAN*));
 
   if (MessageQueueHandle == 0){
 	  print("Error Creating Queue");
@@ -196,7 +196,8 @@ int main(void)
 
   /* USER CODE BEGIN RTOS_THREADS */
   print("MCP2515 init Started");
-  mcp2515init();
+  //mcp2515init();
+  TimeInit();
   print("Program Started");  /* USER CODE END RTOS_THREADS */
 
   /* Start scheduler */
@@ -526,18 +527,36 @@ uint8_t mcp2515readRegister(uint8_t address){
 	return rxBuffer[2];
 }
 
+void TimeInit(void){
+	RTC_TimeTypeDef sTime = {0};
+	sTime.Hours = 0;
+	sTime.Minutes = 0;
+	sTime.Seconds = 0;
+	sTime.SubSeconds = 0;
 
-uint16_t Timestamp(void) {
+	if(HAL_RTC_SetTime(&hrtc, &sTime, RTC_FORMAT_BIN) != HAL_OK){
+		Error_Handler();
+	}
+}
+
+
+uint32_t Timestamp(void) {
     RTC_TimeTypeDef sTime = {0};
-    uint16_t timeValue = 0;
+    RTC_DateTypeDef sDate = {0};
+    uint32_t timeValue = 0;
 
     // Retrieve time from RTC
     if (HAL_RTC_GetTime(&hrtc, &sTime, RTC_FORMAT_BIN) == HAL_OK) {
-        // Convert hours and minutes into seconds, add seconds and milliseconds
-        timeValue = (sTime.Hours * 3600) + (sTime.Minutes * 60) + sTime.Seconds;
-        // RTC provides sub-second information; scale to milliseconds
-        timeValue += (1000 - sTime.SubSeconds) / (1000 / 1024);
+
+        uint32_t SubSeconds = sTime.SubSeconds;
+		uint32_t Predivider = hrtc.Init.SynchPrediv; // Predivider value set in RTC config
+
+		// Calculate milliseconds
+		timeValue = (sTime.Hours * 3600000)+ (sTime.Minutes * 60000)+(sTime.Seconds * 1000) +
+				   (((Predivider - SubSeconds) * 1000) / (Predivider + 1));
     }
+
+    HAL_RTC_GetDate(&hrtc, &sDate, RTC_FORMAT_BIN);
 
     return timeValue;
 }
@@ -649,11 +668,11 @@ void mcp2515readMessage(bool random, uint8_t fixedData){
 	/*
 	 * This function should decode the CAN message into a heap memory pointer to a MessageCAN struct
 	 * Pointer then needs to pass the message into the mail queue then check queue size
+	 *
+	 * Args: random(bool): if random number should be generated
+	 * 		 fixedData(uint8_t
 	 */
 
-	//Use this function to take the message and transform it into a readable CAN message packet to be read
-
-	//Use the recevice function and return a random number in place of of it. Clears register as well
 
 	//Sanity check for GPIO pin
 	GPIO_PinState status = HAL_GPIO_ReadPin(CAN_INT_GPIO_Port, CAN_INT_Pin);
@@ -680,7 +699,7 @@ void mcp2515readMessage(bool random, uint8_t fixedData){
 			RXB0Data[0] = fixedData;
 		}
 
-		//uint16_t timestamp = Timestamp();
+		uint32_t timestamp = Timestamp();
 		counter += 1;
 
 
@@ -695,7 +714,7 @@ void mcp2515readMessage(bool random, uint8_t fixedData){
 
 		ptrToStruct->canID = 0x35;
 		ptrToStruct->data = RXB0Data[0];  //DOES NOT DECAY TO POINTER because of [0]
-		ptrToStruct->		timeStamp = counter;
+		ptrToStruct->timeStamp = timestamp;
 		ptrToStruct->sensorName = "Temp Sensor";
 
 		//Send to QUeue
@@ -722,25 +741,12 @@ void mcp2515readMessage(bool random, uint8_t fixedData){
 		vPortFree(ptr);
 		ptr = NULL;
 
-
-//		char *ptrr;
-//		ptrr = pvPortMalloc(100 * sizeof(char));
-//		sprintf(ptrr, "Data: %u from Sensor: %s", ptrToStruct->data, ptrToStruct->sensorName);
-//		print(ptrr);
-//		vPortFree(ptrr);
-//		ptrr = NULL;
-
 		if (MsgInQueue == 0){    //
 
 			print("Queue is Full");
 			xEventGroupSetBits(messageToRead, EVENT_BIT_3);
 			osThreadYield();
 		}
-
-
-
-
-		//Print out memory it is stored at
 	}
 
 	//If no message buffer, should not happen
@@ -758,16 +764,19 @@ void sdCardMsgPost(void){
 	 * Free all memory as messages are processed
 	 */
 
-
-
 	if (uxQueueSpacesAvailable(MessageQueueHandle) == 0){
 
 		MessageCAN *ptrToRxMsg;
 		char *ptr;
 
-		while(uxQueueMessagesWaiting(MessageQueueHandle) != 0){			//     ////Make this a for loop for sizeof messages waiting
+		print("In SD Msg post function");
 
-			print("In SD Msg post function");
+		uint8_t numberOfMessages = uxQueueMessagesWaiting(MessageQueueHandle);
+
+		//while(uxQueueMessagesWaiting(MessageQueueHandle) != 0)
+		for(int i = 0; i < numberOfMessages; i++){			//     ////Make this a for loop for sizeof messages waiting
+
+
 
 			if (xQueueReceive(MessageQueueHandle, &ptrToRxMsg, portMAX_DELAY) == pdPASS ){
 
@@ -776,10 +785,12 @@ void sdCardMsgPost(void){
 							print("Memory allocation failed for sd card msg");
 							Error_Handler();
 				}
-				sprintf (ptr, "Received Data: %u at Time: %u from %s", ptrToRxMsg->data, ptrToRxMsg->timeStamp, ptrToRxMsg->sensorName);
+				if (i < 3){
+				sprintf (ptr, "Received Data: %u at Time: %lu from %s", ptrToRxMsg->data, ptrToRxMsg->timeStamp, ptrToRxMsg->sensorName);
 				print(ptr);
 				vPortFree(ptr);
 				vPortFree(ptrToRxMsg);
+				}
 			}
 
 		}
@@ -823,7 +834,7 @@ void StartDefaultTask(void const * argument)
   {
     //print("Idle Task");
     //LogStackUsage("Idle Task", defaultTaskHandle);
-    //HeapMonitorTask();
+    HeapMonitorTask();
     osDelay(1000);
 
   }
@@ -870,6 +881,7 @@ void StartTask03(void const * argument)
   {
 	 //print("Task 3 Entered");
 	 EventBits_t uxBits = xEventGroupWaitBits(messageToRead, EVENT_BIT_3, pdTRUE, pdTRUE, portMAX_DELAY); //Or change to IF QueueFull == true then ELSE osYield();
+	 taskENTER_CRITICAL();
 	 print("Task 3 Started");
 	 sdCardMsgPost();
 	 xEventGroupSetBits(messageToRead, EVENT_BIT_0);
@@ -879,6 +891,7 @@ void StartTask03(void const * argument)
 		 Error_Handler();
 	 }
      LogStackUsage("SD Card message Post", sdCardMsgPostHandle);
+     taskEXIT_CRITICAL();
 //	 if (messageToRead == 0x02){
 //		 osThreadYield();
 //	 }

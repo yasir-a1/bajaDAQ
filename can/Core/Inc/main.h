@@ -40,7 +40,7 @@ extern "C" {
 typedef struct {
 	uint8_t canID;
 	uint16_t data;
-	uint16_t timeStamp;
+	uint32_t timeStamp;
 	char *sensorName;
 }MessageCAN;
 
