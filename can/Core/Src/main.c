@@ -1,4 +1,5 @@
 /* USER CODE BEGIN Header */
+//Yasir Ahmad
 /**
   ******************************************************************************
   * @file           : main.c
@@ -39,7 +40,7 @@
 /* USER CODE BEGIN PD */
 #define SPI1_CS_LOW()  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_RESET)
 #define SPI1_CS_HIGH() HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_SET)
-#define EVENT_BIT_0 (0 << 0)
+#define EVENT_BIT_0 (1 << 0)
 #define EVENT_BIT_3 (1 << 3)
 #define EVENT_BIT_2 (1 << 2)
 #define EVENT_BIT_1 (1 << 1)
@@ -88,7 +89,7 @@ void StartTask04(void const * argument);
 
 /* USER CODE BEGIN PFP */
 
-//No idea what this doe, but needed for xEventGroupSetBitsFromISR
+//needed for xEventGroupSetBitsFromISR access
 void vApplicationGetTimerTaskMemory(StaticTask_t **ppxTimerTaskTCBBuffer,
                                     StackType_t **ppxTimerTaskStackBuffer,
                                     uint32_t *pulTimerTaskStackSize)
@@ -196,7 +197,7 @@ int main(void)
 
   /* USER CODE BEGIN RTOS_THREADS */
   print("MCP2515 init Started");
-  //mcp2515init();
+  mcp2515init();
   TimeInit();
   print("Program Started");  /* USER CODE END RTOS_THREADS */
 
@@ -214,7 +215,6 @@ int main(void)
 
   while (1)
   {
-	  //mcp2515messageAvailable();
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -428,6 +428,13 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 
 void LogStackUsage(const char* taskName, osThreadId thread_id) {
+	/**
+	  * @brief Monitors and logs the remaining stack of a given task.
+	  * @param taskName   Name to identify the task in logs
+	  * @param thread_id  CMSIS-RTOS thread ID (cast to FreeRTOS handle)
+	  * @retval None
+	  */
+
     // Cast CMSIS-RTOS thread ID to FreeRTOS TaskHandle_t
     TaskHandle_t freertosTaskHandle = (TaskHandle_t)thread_id;
 
@@ -450,6 +457,11 @@ void LogStackUsage(const char* taskName, osThreadId thread_id) {
 /* Define the Heap Monitor Task */
 void HeapMonitorTask(void)
 {
+	/**
+	  * @brief Periodically logs free and minimum-ever free heap to UART.
+	  * @param None
+	  * @retval None
+	  */
 
         size_t freeHeap = xPortGetFreeHeapSize();
         size_t minFreeHeap = xPortGetMinimumEverFreeHeapSize();
@@ -477,22 +489,28 @@ void vApplicationMallocFailedHook(void)
 
 
 void print(const char* buffer) {
+	/**
+	  * @brief Prints a null-terminated string with CR+LF over UART under mutex.
+	  * @param msg  Pointer to C-string to send
+	  * @retval None
+	  */
+
     // Calculate the string length
 	if (osMutexWait(uartMutexHandle, osWaitForever) == osOK){
     size_t length = strlen(buffer);
 
-    // Add space for the new line and carriage return
+    // add space for the new line and carriage return
     char tempBuffer[length + 3]; // Original string + '\r' + '\n' + null terminator
 
-    // Copy the original string into the temporary buffer
+    // Copy the original string into the temp buffer
     strcpy(tempBuffer, buffer);
 
     // Append the new line and carriage return
-    tempBuffer[length] = '\r';     // Carriage return
-    tempBuffer[length + 1] = '\n'; // New line
-    tempBuffer[length + 2] = '\0'; // Null terminator
+    tempBuffer[length] = '\r';
+    tempBuffer[length + 1] = '\n';
+    tempBuffer[length + 2] = '\0';
 
-    // Transmit the modified string over UART
+    // transmit the modified string UART
     HAL_UART_Transmit(&huart2, (uint8_t*)tempBuffer, strlen(tempBuffer), 100);
     osMutexRelease(uartMutexHandle);
 	}
@@ -500,6 +518,12 @@ void print(const char* buffer) {
 }
 
 void mcp2515writeRegister(uint8_t address, uint8_t data){
+	/**
+	  * @brief  Writes a byte to an MCP2515 register over SPI.
+	  * @param  address  Register address
+	  * @param  data     Byte to write
+	  * @retval None
+	  */
 
 	uint8_t txBuffer[3] = {0x02, address, data};
 
@@ -510,6 +534,11 @@ void mcp2515writeRegister(uint8_t address, uint8_t data){
 
 
 uint8_t mcp2515readRegister(uint8_t address){
+	/**
+	  * @brief  Reads a byte from an MCP2515 register over SPI.
+	  * @param  address  Register address
+	  * @retval uint8_t  Register value
+	  */
 
 	uint8_t txBuffer[3] = {0x03, address, 0xFF};
 	uint8_t rxBuffer[3] = {0};
@@ -528,6 +557,12 @@ uint8_t mcp2515readRegister(uint8_t address){
 }
 
 void TimeInit(void){
+	/**
+	  * @brief  Sets RTC time to 00:00:00.
+	  * @param  None
+	  * @retval None
+	  */
+
 	RTC_TimeTypeDef sTime = {0};
 	sTime.Hours = 0;
 	sTime.Minutes = 0;
@@ -541,6 +576,12 @@ void TimeInit(void){
 
 
 uint32_t Timestamp(void) {
+	/**
+	  * @brief  Retrieves a millisecond timestamp since midnight from the RTC.
+	  * @param  None
+	  * @retval uint32_t  Time in ms since midnight
+	  */
+
     RTC_TimeTypeDef sTime = {0};
     RTC_DateTypeDef sDate = {0};
     uint32_t timeValue = 0;
@@ -564,7 +605,6 @@ uint32_t Timestamp(void) {
 
 
 void mcp2515setTiming(void){
-	// Example configuration for 500 kbps with 8 MHz oscillator
 	// Calculate CNF1, CNF2, CNF3 using the MCP2515 datasheet
 	mcp2515writeRegister(0x2A, 0x00); // CNF1: SJW=1, BRP=0
 	mcp2515writeRegister(0x29, 0x90); // CNF2: BTLMODE=1, SAM=0, PHSEG1=3, PRSEG=1
@@ -579,6 +619,11 @@ void mcp2515normalMode(void){
 }
 
 void mcp2515init(void){
+	/**
+	  * @brief  Initializes the MCP2515 CAN controller to normal mode.
+	  * @param  None
+	  * @retval None
+	  */
 
 	uint8_t resetOP[1] = {0xC0};
 	uint8_t status = 0;
@@ -635,9 +680,13 @@ void mcp2515init(void){
 
 void mcp2515messageAvailable(void){
 
-	/*Function to trigger the interrupt on the MCP2515 module
-	 * when a message is available in the receive buffer 0 (RXB0)
-	 */
+	/**
+	  * @brief  Activates MCP2515 Int pin, reenacts message coming in (HIL).
+	  * Polls the MCP2515 interrupt pin, sets the appropriate interrupt flag
+	  * register when a message is available in RX buffer 0.
+	  * @param  None
+	  * @retval None
+	  */
 
 	GPIO_PinState status;
 	GPIO_PinState status1;
@@ -665,13 +714,13 @@ void mcp2515messageAvailable(void){
 
 void mcp2515readMessage(bool random, uint8_t fixedData){
 
-	/*
-	 * This function should decode the CAN message into a heap memory pointer to a MessageCAN struct
-	 * Pointer then needs to pass the message into the mail queue then check queue size
-	 *
-	 * Args: random(bool): if random number should be generated
-	 * 		 fixedData(uint8_t
-	 */
+	/**
+	  * @brief  Reads a CAN message from the MCP2515, allocates a MessageCAN struct,
+	  *         and enqueues it. Signals queue‐full via event on overflow.
+	  * @param  random     If true, generate pseudo‐random payload; otherwise use fixedData.
+	  * @param  fixedData  Byte of data to use when random == false.
+	  * @retval None
+	  */
 
 
 	//Sanity check for GPIO pin
@@ -701,7 +750,6 @@ void mcp2515readMessage(bool random, uint8_t fixedData){
 
 		uint32_t timestamp = Timestamp();
 		counter += 1;
-
 
 		//Create Pointer to the MessageCAN Struct
 		MessageCAN *ptrToStruct;
@@ -758,11 +806,12 @@ void mcp2515readMessage(bool random, uint8_t fixedData){
 }
 
 void sdCardMsgPost(void){
-	/*
-	 * This function should be called whenever the mail queue is full by responding to an event
-	 * It should process every message in the queue, post it to the SD card using a for-loop or print out to terminal
-	 * Free all memory as messages are processed
-	 */
+	/**
+	  * @brief  Flushes all MessageCAN structs from the queue and posts them to the SD
+	  *         card (or UART). Frees each message’s heap allocation afterwards.
+	  * @param  None
+	  * @retval None
+	  */
 
 	if (uxQueueSpacesAvailable(MessageQueueHandle) == 0){
 
@@ -774,10 +823,7 @@ void sdCardMsgPost(void){
 		uint8_t numberOfMessages = uxQueueMessagesWaiting(MessageQueueHandle);
 
 		//while(uxQueueMessagesWaiting(MessageQueueHandle) != 0)
-		for(int i = 0; i < numberOfMessages; i++){			//     ////Make this a for loop for sizeof messages waiting
-
-
-
+		for(int i = 0; i < numberOfMessages; i++){
 			if (xQueueReceive(MessageQueueHandle, &ptrToRxMsg, portMAX_DELAY) == pdPASS ){
 
 				ptr = pvPortMalloc(100 * sizeof(char));
@@ -792,13 +838,13 @@ void sdCardMsgPost(void){
 				vPortFree(ptrToRxMsg);
 				}
 			}
-
 		}
 	}
 }
 
 
 void sdCardSpiTransmission(void){
+	//TODO: ParellelWork
 	//Function to take in the buffer and transmit through SPI
 	//Need to use an SPI mutex for multiple SPI operations
 	return;
@@ -807,8 +853,6 @@ void sdCardSpiTransmission(void){
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
-
-
 	UNUSED(GPIO_Pin);
 	BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 	xEventGroupSetBitsFromISR(messageToRead, EVENT_BIT_1, &xHigherPriorityTaskWoken);
@@ -828,6 +872,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 /* USER CODE END Header_StartDefaultTask */
 void StartDefaultTask(void const * argument)
 {
+
   /* USER CODE BEGIN 5 */
   /* Infinite loop */
   for(;;)
@@ -856,12 +901,10 @@ void StartTask02(void const * argument)
   {
 	  //print("Task 2 Entered");
 	  EventBits_t uxBits = xEventGroupWaitBits(messageToRead, EVENT_BIT_2, pdTRUE, pdTRUE, portMAX_DELAY);
-	  //if (ux)
 	  print("Task Started");
       mcp2515readMessage(false, 100);
       EventBits_t currentBits = xEventGroupGetBits(messageToRead);  //DEBUG
       LogStackUsage("Read Message Task", myTask02Handle);
-
   }
   /* USER CODE END StartTask02 */
 }
@@ -892,16 +935,6 @@ void StartTask03(void const * argument)
 	 }
      LogStackUsage("SD Card message Post", sdCardMsgPostHandle);
      taskEXIT_CRITICAL();
-//	 if (messageToRead == 0x02){
-//		 osThreadYield();
-//	 }
-    //if osDelayUntil (2000) or mailQueueFullEvent
-    //then read all messages from the mail queue into local array struct
-    //post all messages to UART?
-    //crtical section??
-
-
-
   }
   /* USER CODE END StartTask03 */
 }
@@ -927,10 +960,6 @@ void StartTask04(void const * argument)
 	  currentBits = xEventGroupGetBits(messageToRead);
       LogStackUsage("Avialable Message Task", messageAvailablHandle);
 	  osDelay(50);
-
-
-
-
   }
   /* USER CODE END StartTask04 */
 }
